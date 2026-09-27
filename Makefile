@@ -1,9 +1,10 @@
-.PHONY: help build up down logs clean restart test lint format install-dev
+.PHONY: help build up down logs clean restart test lint format install-dev validate-env check-db backup restore
 
 # Colors for output
 BLUE := \033[0;34m
 GREEN := \033[0;32m
 YELLOW := \033[0;33m
+RED := \033[0;31m
 NC := \033[0m # No Color
 
 help: ## Show this help message
@@ -124,3 +125,51 @@ health: ## Check health of all services
 
 version: ## Show project version
 	@python -c "from aq_engine import __version__; print(__version__)"
+
+validate-env: ## Validate environment configuration
+	@echo "$(BLUE)Validating environment...$(NC)"
+	@bash scripts/validate-environment.sh
+
+check-db: ## Check database schema and migrations
+	@echo "$(BLUE)Checking database...$(NC)"
+	@bash scripts/check-db-migrations.sh
+
+backup: ## Backup PostgreSQL database
+	@echo "$(BLUE)Creating database backup...$(NC)"
+	@mkdir -p backups
+	@docker-compose exec -T postgres pg_dump -U aqadmin aq_control > backups/aq_control_$(shell date +%Y%m%d_%H%M%S).sql
+	@echo "$(GREEN)✓ Backup created in backups/$(NC)"
+
+restore: ## Restore PostgreSQL database from backup (use BACKUP=filename)
+	@if [ -z "$(BACKUP)" ]; then \
+		echo "$(RED)Error: BACKUP parameter required$(NC)"; \
+		echo "Usage: make restore BACKUP=backups/aq_control_20260927_120000.sql"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Restoring database from $(BACKUP)...$(NC)"
+	@docker-compose exec -T postgres psql -U aqadmin aq_control < $(BACKUP)
+	@echo "$(GREEN)✓ Database restored$(NC)"
+
+ingest-openaq: ## Run OpenAQ ingestion manually
+	@echo "$(BLUE)Running OpenAQ ingestion...$(NC)"
+	docker-compose exec api aq ingest --source openaq
+
+ingest-weather: ## Run weather ingestion manually
+	@echo "$(BLUE)Running weather ingestion...$(NC)"
+	docker-compose exec api aq ingest --source weather
+
+docs-serve: ## Serve documentation locally
+	@echo "$(BLUE)Starting documentation server...$(NC)"
+	@echo "Documentation available at docs/"
+	@python -m http.server 8080 --directory docs &
+
+ci-local: lint test ## Run CI checks locally
+	@echo "$(BLUE)Running CI checks...$(NC)"
+	@echo "$(GREEN)✓ All CI checks passed$(NC)"
+
+setup: env-setup build up airflow-init health ## Complete setup from scratch
+	@echo "$(GREEN)✓ Setup complete!$(NC)"
+	@echo "Access points:"
+	@echo "  - Airflow: http://localhost:8080 (admin/admin)"
+	@echo "  - API: http://localhost:8000/docs"
+	@echo "  - Dashboard: http://localhost:8501"
